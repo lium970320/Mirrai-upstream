@@ -118,6 +118,37 @@ describe("collectReminders", () => {
     expect(reminders.some((r) => r.kind === "together_years")).toBe(true);
   });
 
+  it.each([
+    [new Date(2024, 4, 19, 23, 59), false],
+    [new Date(2024, 4, 20, 0, 0), true],
+    [new Date(2024, 4, 20, 12, 0), true],
+    [new Date(2024, 4, 20, 23, 59), true],
+    [new Date(2024, 4, 21, 0, 0), false],
+  ] as const)("uses the entire local anniversary day and no neighboring days at %s", (date, due) => {
+    const reminders = collectReminders({
+      persona: persona({ togetherFrom: "2021-05-20" }),
+      anniversaries: [{ id: 2, title: "启程", date: "05-20" }],
+      photos: [{ id: 7, originalName: "map.png", extractedMemory: null, createdAt: new Date(2020, 4, 20, 0, 15) }],
+      now: date,
+    });
+    expect(reminders.map(reminder => reminder.dedupeKey)).toEqual(due ? [
+      "anniversary:2:2024-05-20",
+      "together_years:1:2024-05-20",
+      "memory_trigger:7:2024-05-20",
+    ] : []);
+    if (due) {
+      expect(reminders.find(reminder => reminder.kind === "together_years")?.text).toContain("第 3 年");
+    }
+  });
+
+  it("matches a leap-day start only on February 29 of a leap year", () => {
+    const options = { persona: persona({ togetherFrom: "2020-02-29" }), anniversaries: [] };
+    expect(collectReminders({ ...options, now: new Date(2024, 1, 29, 15, 30) }))
+      .toMatchObject([{ kind: "together_years", dedupeKey: "together_years:1:2024-02-29" }]);
+    expect(collectReminders({ ...options, now: new Date(2025, 1, 28, 23, 59) })).toEqual([]);
+    expect(collectReminders({ ...options, now: new Date(2025, 2, 1, 0, 0) })).toEqual([]);
+  });
+
   it("fires a memory trigger for a photo taken on this day", () => {
     const reminders = collectReminders({
       persona: persona(),
@@ -163,7 +194,7 @@ describe("extractPhotoDate", () => {
   });
 
   it("falls back to the upload date", () => {
-    expect(extractPhotoDate(null, new Date(Date.UTC(2019, 4, 20)))).toBe(
+    expect(extractPhotoDate(null, new Date(2019, 4, 20, 0, 15))).toBe(
       "2019-05-20",
     );
   });
@@ -242,6 +273,17 @@ describe("deliverReminder", () => {
 
     expect(delivered).toBe(false);
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("QQ 文字接入不自动开启主动提醒，仍保存网页提醒卡片", async () => {
+    const delivered = await deliverReminder({
+      userId: 1, reminder, channel: "qq", targetId: "private:10002",
+      now: new Date(2024, 4, 20, 10, 0),
+    });
+    expect(send).not.toHaveBeenCalled();
+    expect(getChannelAdapter).not.toHaveBeenCalled();
+    expect(recordReminder).toHaveBeenCalledWith(expect.objectContaining({ channel: "web" }));
+    expect(delivered).toBe(true);
   });
 
   it("falls back to the web card when no channel is bound", async () => {
